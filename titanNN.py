@@ -6,6 +6,8 @@ import datetime as dt
 from fancyimpute import KNN
 from sklearn import preprocessing as skp
 from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
 
 #filepaths (added to a dictionary for easy access & expansion:
 pathdict = {'cardiologie':'/home/kerkt02/patdata/DM_CARDIOLOGIE.csv', 'subtraject':'/home/kerkt02/patdata/QUERY_FOR_DM_SUBTRAJECTEN.csv','opname':'/home/kerkt02/patdata/QUERY_FOR_DM_LGS_OPNAME.csv'}
@@ -127,6 +129,11 @@ def checkForReadmission(df):
 		readTrue.append(patnr)
 
 	return readTrue
+
+def rfc(features, target):
+	cl = RandomForestClassifier()
+	cl.fit(features,target)
+	return cl
 
 #this method holds the configuration for a convolutional neural network. It is called in a different method.
 def CNN(features, labels, mode):
@@ -327,12 +334,16 @@ def main():
 #	condf = normalizer(df)
 #	inputdf = dfexport(catdf, condf)
 	train, test, trainlbl, testlbl = initForCNN()
-	train = np.asmatrix(train,dtype=np.float32)
-	trainlbl = np.asarray(trainlbl, dtype=np.int32)
-	test = np.asmatrix(test,dtype=np.float32)
-	testlbl = np.asarray(testlbl, dtype=np.int32)
+	trained_model = rfc(train, trainlbl)
+	trainn = np.asmatrix(train,dtype=np.float32)
+	trainnlbl = np.asarray(trainlbl, dtype=np.int32)
+	testt = np.asmatrix(test,dtype=np.float32)
+	testtlbl = np.asarray(testlbl, dtype=np.int32)
 
-	runNN(train, test, trainlbl, testlbl)
+	runNN(trainn, testt, trainnlbl, testtlbl)
+
+	predictions = trained_model.predict(test)
+	print(accuracy_score(testlbl, predictions))
 
 main()
 
