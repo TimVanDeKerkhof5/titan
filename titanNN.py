@@ -1,36 +1,47 @@
+import matplotlib.pyplot as plt
 import pandas as pd
 import random as rnd
 import numpy as np
 import tensorflow as tf
 import datetime as dt
+
 from fancyimpute import KNN
+from scipy import stats
+
 from sklearn import preprocessing as skp
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import accuracy_score
+from sklearn import tree
 
 #filepaths (added to a dictionary for easy access & expansion:
 pathdict = {'cardiologie':'/home/kerkt02/patdata/DM_CARDIOLOGIE.csv', 'subtraject':'/home/kerkt02/patdata/QUERY_FOR_DM_SUBTRAJECTEN.csv','opname':'/home/kerkt02/patdata/QUERY_FOR_DM_LGS_OPNAME.csv'}
 
-#dataframes:
-dfcardio = pd.read_csv(pathdict['cardiologie'],header=0,low_memory=False,encoding='ISO-8859-1')
-dfsub = pd.read_csv(pathdict['subtraject'],header=0,low_memory=False,encoding='ISO-8859-1')
-dfadmission = pd.read_csv(pathdict['opname'],header=0,low_memory=False,encoding='ISO-8859-1')
-dfread = pd.DataFrame()
+#dataframes: dfcardio, sub, admission and raw are not used when not initializing, they should be hashed to spare compution time.
+#dfcardio = pd.read_csv(pathdict['cardiologie'],header=0,low_memory=False,encoding='ISO-8859-1')
+#dfsub = pd.read_csv(pathdict['subtraject'],header=0,low_memory=False,encoding='ISO-8859-1')
+#dfadmission = pd.read_csv(pathdict['opname'],header=0,low_memory=False,encoding='ISO-8859-1')
+#dfread = pd.DataFrame()
 nnraw = pd.read_csv('data.csv',header=0,low_memory=False,encoding='ISO-8859-1')
 nninput = pd.read_csv('input.csv',header=0)
+col = nninput.columns
 
 #constants:
 geb = 'Geboortedatum'
 selectedcon = ['Geboortedatum', 'lengte','gewicht','bloeddruk','HB','HT','INR','Glucose','Kreat','Trombocyten','Leukocyten','Cholesterol_totaal','Cholesterol_ldl']
-selectedcat = ['Geslacht','DiagnoseCode','DBC_Specialisme','vrgeschiedenis_myochardinfarct','vrgeschiedenis_PCI','vrgeschiedenis_CABG','vrgeschiedenis_CVA_TIA','vrgeschiedenis_vaatlijden','vrgeschiedenis_hartfalen','vrgeschiedenis_maligniteit','vrgeschiedenis_COPD','vrgeschiedenis_atriumfibrilleren','TIA','CVA_Niet_Bloedig','CVA_Bloedig','LV_Functie','dialyse','riscf_roken','riscf_familieanamnese','riscf_hypertensie','riscf_hypercholesterolemie','riscf_diabetes','roken','ECG_Ritme','Radialis','Femoralis','Brachialis','vd_1','vd_2','vd_3']
+selectedcat = ['Geslacht','DiagnoseCode','vrgeschiedenis_myochardinfarct','vrgeschiedenis_PCI','vrgeschiedenis_CABG','vrgeschiedenis_CVA_TIA','vrgeschiedenis_vaatlijden','vrgeschiedenis_hartfalen','vrgeschiedenis_maligniteit','vrgeschiedenis_COPD','vrgeschiedenis_atriumfibrilleren','TIA','CVA_Niet_Bloedig','CVA_Bloedig','dialyse','riscf_roken','riscf_familieanamnese','riscf_hypertensie','riscf_hypercholesterolemie','riscf_diabetes','roken','Radialis','Femoralis','Brachialis','vd_1','vd_2','vd_3']
+concatlist = selectedcon+selectedcat
+
 selectedtarget = 'lbl'
 
-#NN parameters:
+#CNN parameters:
 learningrateNN = 0.003
-shapeNN = 70
+shapeNN = len(nninput.columns)-1
 stepsNN = 20000
 
+
+#split data to train and test .85 - .15
 def initForCNN():
 	dftest, dftrain = train_test_split(nninput, test_size = 0.85)
 	cnntrain = dftrain[dftrain.columns.difference([selectedtarget])]
@@ -130,19 +141,25 @@ def checkForReadmission(df):
 
 	return readTrue
 
+#random forest classifier
 def rfc(features, target):
 	cl = RandomForestClassifier()
 	cl.fit(features,target)
 	return cl
 
+#gradient boosting classifier (uses algoritm similar to optimizer used in CNN
+def gtc(features, target):
+	clf = GradientBoostingClassifier(n_estimators=1000,learning_rate=0.3,max_depth=1,random_state=0)
+	clf.fit(features,target)
+	return clf
+
 #this method holds the configuration for a convolutional neural network. It is called in a different method.
 def CNN(features, labels, mode):
+
+#input layer
 	input_layer = tf.reshape(features["x"], [-1, shapeNN, 1, 1])
-# Convolutional Layer #1
-  # Computes 32 features using a 5x5 filter with ReLU activation.
-  # Padding is added to preserve width and height.
-  # Input Tensor Shape: [batch_size, 97, 1, 1]
-  # Output Tensor Shape: [batch_size, 91, 1, 32]
+
+# Convolutional Layer #1, 5x1 filter
 	conv1 = tf.layers.conv2d(
 		inputs=input_layer,
 		filters=32,
@@ -150,17 +167,10 @@ def CNN(features, labels, mode):
 		padding="same",
 		activation=tf.nn.relu)
 
-  # Pooling Layer #1
-  # First max pooling layer with a 2x1 filter and stride of 2
-  # Input Tensor Shape: [batch_size, 97, 1, 32]
-  # Output Tensor Shape: [batch_size, 96/2, 1, 32]
+  # Pooling Layer #1, 2x1 filter
 	pool1 = tf.layers.max_pooling2d(inputs=conv1, pool_size=[2, 1], strides=2)
 
-  # Convolutional Layer #2
-  # Computes 64 features using a 5x1 filter.
-  # Padding is added to preserve width and height.
-  # Input Tensor Shape: [batch_size, 97/2, 1, 32]
-  # Output Tensor Shape: [batch_size, 97/2, 1, 64]
+  # Convolutional Layer #2, 5x1 filter
 	conv2 = tf.layers.conv2d(
 		inputs=pool1,
 		filters=64,
@@ -168,52 +178,40 @@ def CNN(features, labels, mode):
 		padding="same",
 		activation=tf.nn.relu)
 
-  # Pooling Layer #2
-  # Second max pooling layer with a 2x1 filter and stride of 2
-  # Input Tensor Shape: [batch_size, 97/2, 1, 64]
-  # Output Tensor Shape: [batch_size, 97/4, 1, 64]
+  # Pooling Layer #2, 2x1 filter
+
 	pool2 = tf.layers.max_pooling2d(inputs=conv2, pool_size=[2, 1], strides=2)
 
-  # Flatten tensor into a batch of vectors
-  # Input Tensor Shape: [batch_size, 97/4, 1, 64]
-  # Output Tensor Shape: [batch_size, 97/4 * 1 * 64]
+  # Flatten input to vector
 	pool2_flat = tf.reshape(pool2, [- 1, int(shapeNN/4) * 1 * 64])
 
-  # Dense Layer
-  # Densely connected layer with 2000 neurons
-  # Input Tensor Shape: [batch_size, 97/4 * 1 * 64]
-  # Output Tensor Shape: [batch_size, 1024]
+  # Dense Layer, 2000 neurons
 	dense = tf.layers.dense(inputs=pool2_flat, units=2000, activation=tf.nn.relu)
-  # Add dropout operation; 0.6 probability that element will be kept
-	dropout = tf.layers.dropout(inputs=dense, rate=0.0, training=mode == tf.estimator.ModeKeys.TRAIN)
 
   # Logits layer
-  # Input Tensor Shape: [batch_size, 2000]
-  # Output Tensor Shape: [batch_size, 2]
-	logits = tf.layers.dense(inputs=dropout, units=2)
+	logits = tf.layers.dense(inputs=dense, units=2)
 
 	predictions = {
-      # Generate predictions (for PREDICT and EVAL mode)
+      #get predictions with eval set)
 		"classes": tf.argmax(input=logits, axis=1),
-      # Add `softmax_tensor` to the graph. It is used for PREDICT and by the
-      # `logging_hook`.
+      # add softmax function
 		"probabilities": tf.nn.softmax(logits, name="softmax_tensor")
 	}
 	if mode == tf.estimator.ModeKeys.PREDICT:
 		return tf.estimator.EstimatorSpec(mode=mode, predictions=predictions)
 
-  # Calculate Loss (for both TRAIN and EVAL modes)
+  # Calculate Loss
 	onehot_labels = tf.one_hot(indices=tf.cast(labels, tf.int32), depth=2)
 	loss = tf.losses.softmax_cross_entropy(
 		onehot_labels=onehot_labels, logits=logits)
 
-  # Configure the Training Op (for TRAIN mode)
+  # Configure the Training Op
 	if mode == tf.estimator.ModeKeys.TRAIN:
 		optimizer = tf.train.GradientDescentOptimizer(learning_rate=learningrateNN)
 		train_op = optimizer.minimize(loss=loss,global_step=tf.train.get_global_step())
 		return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
-  # Add evaluation metrics (for EVAL mode)
+  # Add evaluation metrics for accuracy
 	eval_metric_ops = {
 		"accuracy": tf.metrics.accuracy(
 		labels=labels, predictions=predictions["classes"])}
@@ -226,9 +224,10 @@ def imputer():
 	condf = pd.DataFrame(KNN(3).complete(nnraw[selectedcon]))
 	condf.columns = precondf.columns
 	condf.index = precondf.index
+	condf = condf[(np.abs(stats.zscore(condf)) < 10).all(axis=1)]
 	return condf
 
-#this method normalizes all given continuous variables. Encoded variables are appended to a separate pandas dataframe.
+#this method normalizes all given continuous variables. Encoded variables are appended to a separate pandas dataframe. also removes outliers.
 def normalizer(cdf):
 	condf = pd.DataFrame()
 	for feature in cdf:
@@ -238,6 +237,7 @@ def normalizer(cdf):
 	condf = cdf
 	return condf
 
+#function for normalization per column
 def normalizeData(df):
 	x = df.values.astype(float)
 	x = pd.DataFrame(x)
@@ -287,6 +287,8 @@ def readmissionDeterminator(pat):
 def dfexport(cat, con):
 	dflbl = nnraw[selectedtarget]
 	expdf = pd.concat([cat,con,dflbl],axis=1,ignore_index=False)
+	expdf.dropna(how='any',inplace=True)
+	print(expdf)
 	expdf.to_csv(path_or_buf='input.csv',index=False)
 	return expdf
 
@@ -319,6 +321,16 @@ def runNN(train_data, eval_data, train_labels, eval_labels):
 	eval_results = cnn_classifier.evaluate(input_fn=eval_input_fn)
 	print(eval_results)
 
+#export step for the random forest, gauging volatility of the feature importances
+def treefile(t, filename):
+	importances = []
+	importances = t.feature_importances_
+	indices = np.argsort(importances)
+	with open(filename, 'a') as file:
+		for index in indices:
+			file.write(col[index]+" ")
+		file.write('\n')
+
 
 #main
 def main():
@@ -328,11 +340,12 @@ def main():
 #	readmissionDeterminator(idlist)
 
 	#hash the following 5 methods to stop the imputation/normalization/onehotencoding of data, to save computation time.
-#	DOBConverter()
-#	df = imputer()
-#	catdf = oneHotEncoder()
-#	condf = normalizer(df)
-#	inputdf = dfexport(catdf, condf)
+	#DOBConverter()
+	#df = imputer()
+	#catdf = oneHotEncoder()
+	#condf = normalizer(df)
+	#inputdf = dfexport(catdf, condf)
+
 	train, test, trainlbl, testlbl = initForCNN()
 	trained_model = rfc(train, trainlbl)
 	trainn = np.asmatrix(train,dtype=np.float32)
@@ -341,9 +354,14 @@ def main():
 	testtlbl = np.asarray(testlbl, dtype=np.int32)
 
 	runNN(trainn, testt, trainnlbl, testtlbl)
-
+	gradientmodel = gtc(train, trainlbl)
+	print("gradient boost:")
+	print(gradientmodel.score(test, testlbl))
 	predictions = trained_model.predict(test)
+	print("random forest:")
 	print(accuracy_score(testlbl, predictions))
+	treefile(trained_model, 'rtitan.txt')
+	treefile(gradientmodel, 'gtitan.txt')
 
 main()
 
